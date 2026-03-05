@@ -1,4 +1,4 @@
-# RC_AImodel
+# C_AImodel
 # Cystectomy 30-Day Risk Calculator
 
 ## Overview
@@ -8,8 +8,6 @@ This repository contains the deployment code and trained machine learning models
 * **30-Day Mortality:** Calibrated Random Forest Classifier
 * **30-Day Major Morbidity:** Calibrated XGBoost Classifier
 
-## Methodology
-Due to the rarity of severe complications and mortality, Global SMOTE (Synthetic Minority Over-sampling Technique) was applied to address class imbalance. The algorithms were heavily regularized to prevent overfitting. Probabilities were calibrated using Isotonic Regression and Platt Scaling, with optimal decision thresholds determined via the Youden Index. 
 
 ## Files in this Repository
 * `app.py`: The Streamlit web application script.
