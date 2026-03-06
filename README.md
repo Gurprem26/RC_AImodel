@@ -17,7 +17,7 @@ This repository contains the deployment code and trained machine learning models
 * `morbidity_xgb_model.pkl`: The serialized XGBoost model.
 
 ## Data Availability
-**⚠️ Note:** The raw patient dataset (`MLmastersheet.xlsx`) derived from ACS-NSQIP is not included in this repository to comply with the ACS-NSQIP Data Use Agreement (DUA) and patient privacy regulations. 
+**⚠️ Note:** The raw patient dataset derived from ACS-NSQIP is not included in this repository or shared anywhere to comply with the ACS-NSQIP Data Use Agreement (DUA) and patient privacy regulations. 
 
 ## Research Use Only
 This tool is strictly for academic and research purposes. It is not intended to diagnose, treat, cure, or prevent any disease, nor should it replace the clinical judgment of a licensed healthcare professional.
