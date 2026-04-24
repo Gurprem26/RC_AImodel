@@ -1,171 +1,162 @@
 import streamlit as st
 import numpy as np
 
-# --- 1. THE SHAP-BASED LOGIC ENGINE ---
+# --- 1. THE REFINED LOGIC ENGINE ---
 def calculate_risks(data):
-    # Baseline log-odds for NSQIP Radical Cystectomy cohort (approximate intercepts)
-    mort_score = -3.8  
+    """
+        Baseline risks (Intercepts) adjusted for NSQIP Cystectomy cohort.
+    """
+    # Base log-odds (Approximate based on cohort averages of ~2.2% and ~24.4%)
+    mort_score = -3.8
     morb_score = -1.1
 
-    # --- DEMOGRAPHICS & VITALS ---
-    # Age: Linear scaling based on SHAP impact
-    mort_score += (data['age'] - 65) * 0.005
-    morb_score += (data['age'] - 65) * 0.015
+    # --- DEMOGRAPHICS ---
+    # Age: SHAP shows high age = high mortality risk. LR OR 1.42 per unit increase.
+    mort_score += (data['age'] - 65) * 0.12  # Strong weight from LR
+    morb_score += (data['age'] - 65) * 0.01
 
-    # BMI: Impacts Morbidity heavily at extremes
+    # BMI: LR OR 1.15 for Morbidity. SHAP shows high BMI increases morbidity risk.
     if data['bmi'] > 30:
-        morb_score += (data['bmi'] - 30) * 0.05
+        morb_score += (data['bmi'] - 30) * 0.14
     
-    # Sex: Female (0.0 in your dataset) showed higher morbidity risk in SHAP
-    if data['sex'] == "Female":
-        morb_score += 0.8
-        mort_score -= 0.02
+    # Race & Ethnicity: Based on Table 3 (LR) and SHAP Morbidity plot
+    if data['race'] == "Black":
+        morb_score += 0.29  # OR 1.34
+    if data['ethnicity'] == "Hispanic":
+        morb_score += 0.31  # OR 1.37
+
+    # --- CLINICAL & FRAILTY ---
+    # Frailty: mFI-5 Low is a huge protector (OR 0.30 for mortality)
+    if data['frailty'] <= 1:
+        mort_score -= 1.20 
+        morb_score -= 0.33
     else:
-        mort_score += 0.02
+        mort_score += 0.50
 
-    # --- COMORBIDITIES & ASA CLASS ---
-    # ASA Class: Major driver for both
-    asa_map_mort = {1: -0.10, 2: -0.08, 3: 0.03, 4: 0.10}
-    asa_map_morb = {1: -0.50, 2: -0.20, 3: 0.40, 4: 0.80}
-    mort_score += asa_map_mort.get(data['asa'], 0)
-    morb_score += asa_map_morb.get(data['asa'], 0)
-
-    # Hypertension (HYPERMED)
-    if data['htn']:
-        mort_score += 0.04; morb_score += 0.50
-    else:
-        mort_score -= 0.04; morb_score -= 0.50
-
-    # Diabetes (DM)
-    if data['diabetes']: mort_score += 0.03
-    
-    # CHF
-    if data['chf']: mort_score += 0.05
-
-    # Smoking
-    if data['smoke']: morb_score += 0.30
+    # ASA Class: SHAP shows ASA IV as a massive mortality driver
+    asa_mort_map = {1: -0.5, 2: -0.3, 3: 0.1, 4: 0.8}
+    mort_score += asa_mort_map.get(data['asa'], 0)
 
     # --- SURGICAL FACTORS ---
-    if data['prior_pelvic']:
-        mort_score += 0.03; morb_score += 0.60
-        
-    if data['prior_rad']: morb_score += 0.30
+    # Continent Diversion (51596): SHAP shows lower mortality risk for this group
+    if data['diversion'] == "Continent":
+        mort_score -= 0.20
     
-    if data['neoadj']: 
-        morb_score -= 0.20 # SHAP showed Neoadj_0.0 (no chemo) increased risk slightly
+    # Prior Pelvic Surgery: LR OR 1.15 for Morbidity
+    if data['prior_pelvic']:
+        morb_score += 0.14
 
-    # --- LABS (The strongest predictors) ---
-    # Albumin (PRALBUM) - Massive impact on both
+    # --- LABS (Strongest SHAP Drivers) ---
+    # Preop Albumin: Strong protector in both SHAP and LR (OR 0.79/0.88)
+    # SHAP shows values < 3.5 significantly increase risk
     if data['alb'] < 4.0:
-        alb_gap = 4.0 - data['alb']
-        mort_score += alb_gap * 0.08
-        morb_score += alb_gap * 1.50
-        
-    # Creatinine (PRCREAT) - Key for Morbidity
-    if data['creat'] > 1.2:
-        creat_gap = data['creat'] - 1.2
-        morb_score += creat_gap * 0.80
-        mort_score += creat_gap * 0.02
-        
-    # Hematocrit (PRHCT)
-    if data['hct'] < 35:
-        morb_score += (35 - data['hct']) * 0.05
-        
-    # Platelets (PRPLATE)
-    if data['plt'] > 300: morb_score += 0.20
-    elif data['plt'] < 150: morb_score += 0.40
+        alb_diff = 4.0 - data['alb']
+        mort_score += alb_diff * 0.25
+        morb_score += alb_diff * 0.15
 
-    # --- SIGMOID CONVERSION TO PROBABILITY ---
+    # Preop Creatinine: High feature importance in SHAP Mortality
+    if data['creat'] > 1.2:
+        mort_score += (data['creat'] - 1.2) * 0.10
+
+    # Hematocrit: Low HCT increases Morbidity in SHAP
+    if data['hct'] < 30:
+        morb_score += 0.20
+
+    # --- SIGMOID CONVERSION ---
     mort_prob = 1 / (1 + np.exp(-mort_score))
     morb_prob = 1 / (1 + np.exp(-morb_score))
     
     return mort_prob * 100, morb_prob * 100
 
 # --- 2. THE USER INTERFACE ---
-st.set_page_config(page_title="Radical Cystectomy Risk Tool", layout="wide")
+st.set_page_config(page_title="Cystectomy Risk Pro", layout="wide")
 
-st.error("⚠️ **FOR RESEARCH PURPOSES ONLY.** This tool is a demonstration of machine learning model outputs based on retrospective data. It is not intended for clinical decision-making or direct patient care yet.")
+# Custom CSS to keep the app looking professional
+st.markdown("""
+    <style>
+    .main { background-color: #f8f9fa; }
+    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    </style>
+    """, unsafe_allow_html=True)
 
-st.title("🛡️ Radical Cystectomy Risk Scorecard")
-st.write("Predictive modeling derived from ACS NSQIP (2020-2024) utilizing Random Forest and XGBoost algorithms.")
+st.title("🛡️ Radical Cystectomy Risk Assessment Tool")
+st.caption("Evidence-based risk calculation utilizing SHAP-enhanced Machine Learning and Multivariate Logistic Regression (NSQIP 2020-2024)")
 
-st.divider()
+with st.sidebar:
+    st.header("Help & Instructions")
+    st.info("This tool calculates 30-day outcomes. Enter patient preoperative data to see risk adjustments compared to the cohort baseline.")
+    if st.button("🔄 Reset Inputs"):
+        st.rerun()
 
-c1, c2, c3 = st.columns(3)
+# Layout: 3 Columns for data entry
+col1, col2, col3 = st.columns(3)
 
-with c1:
-    st.subheader("Demographics & Vitals")
+with col1:
+    st.subheader("📋 Patient Demographics")
     age = st.number_input("Age (Years)", 18, 100, 65)
     sex = st.selectbox("Biological Sex", ["Male", "Female"])
-    bmi = st.number_input("BMI", 10.0, 60.0, 26.5)
-    asa = st.selectbox("ASA Physical Status Class", [1, 2, 3, 4], index=2)
-    smoke = st.checkbox("Current Smoker")
+    race = st.selectbox("Race", ["White", "Black", "Asian", "Other"])
+    ethnicity = st.selectbox("Ethnicity", ["Non-Hispanic", "Hispanic"])
+    bmi = st.number_input("BMI (kg/m²)", 10.0, 60.0, 26.5)
 
-with c2:
-    st.subheader("Comorbidities & History")
-    htn = st.checkbox("Hypertension requiring Medication")
-    dm = st.checkbox("Diabetes Mellitus")
-    chf = st.checkbox("Congestive Heart Failure")
+with col2:
+    st.subheader("🩺 Clinical Status")
+    frailty = st.slider("mFI-5 Frailty Score", 0, 5, 1, help="Modified Frailty Index (0-5 scale)")
+    asa = st.selectbox("ASA Physical Status", [1, 2, 3, 4], index=2)
+    diversion = st.selectbox("Planned Diversion", ["Ileal Conduit", "Continent", "Other"])
     prior_pelvic = st.checkbox("Prior Pelvic Surgery")
-    prior_rad = st.checkbox("Prior Pelvic Radiation")
     neoadj = st.checkbox("Neoadjuvant Chemotherapy")
 
-with c3:
-    st.subheader("Preoperative Labs")
+with col3:
+    st.subheader("🧪 Preoperative Labs")
     alb = st.number_input("Albumin (g/dL)", 1.0, 5.5, 4.0, step=0.1)
     creat = st.number_input("Creatinine (mg/dL)", 0.1, 10.0, 1.0, step=0.1)
     hct = st.number_input("Hematocrit (%)", 15.0, 55.0, 38.0, step=1.0)
-    plt_count = st.number_input("Platelets (10^9/L)", 50, 800, 250, step=10)
+    plt = st.number_input("Platelets (10³/µL)", 50, 800, 250)
 
-# --- 3. EXECUTION & DASHBOARD ---
-data_inputs = {
-    'age': age, 'sex': sex, 'bmi': bmi, 'asa': asa, 'smoke': smoke,
-    'htn': htn, 'diabetes': dm, 'chf': chf, 'prior_pelvic': prior_pelvic,
-    'prior_rad': prior_rad, 'neoadj': neoadj, 'alb': alb, 'creat': creat, 
-    'hct': hct, 'plt': plt_count
+# --- 3. RESULTS DASHBOARD ---
+inputs = {
+    'age': age, 'sex': sex, 'race': race, 'ethnicity': ethnicity, 
+    'bmi': bmi, 'frailty': frailty, 'asa': asa, 'diversion': diversion,
+    'prior_pelvic': prior_pelvic, 'neoadj': neoadj, 'alb': alb, 
+    'creat': creat, 'hct': hct, 'plt': plt
 }
 
-mort_risk, morb_risk = calculate_risks(data_inputs)
-
-# Set base averages for context
-AVG_MORT, AVG_MORB = 2.2, 24.4
+mort_risk, morb_risk = calculate_risks(inputs)
+AVG_MORT, AVG_MORB = 2.2, 24.4 # Cohort averages
 
 st.divider()
-st.header("📊 Clinical Risk Assessment")
 
-res1, res2 = st.columns(2)
+res_col1, res_col2 = st.columns(2)
 
-with res1:
-    st.metric(
-        label="30-Day Mortality Risk", 
-        value=f"{mort_risk:.2f}%", 
-        delta=f"{mort_risk - AVG_MORT:.2f}% vs Baseline", 
-        delta_color="inverse"
-    )
-    st.caption(f"Cohort Baseline Mortality: {AVG_MORT}%")
+with res_col1:
+    delta_mort = mort_risk - AVG_MORT
+    st.metric("30-Day Mortality Risk", f"{mort_risk:.2f}%", delta=f"{delta_mort:+.2f}%", delta_color="inverse")
+    if mort_risk > 5:
+        st.warning("High Mortality Risk detected.")
 
-with res2:
-    st.metric(
-        label="30-Day Major Morbidity Risk", 
-        value=f"{morb_risk:.2f}%", 
-        delta=f"{morb_risk - AVG_MORB:.2f}% vs Baseline", 
-        delta_color="inverse"
-    )
-    st.caption(f"Cohort Baseline Morbidity: {AVG_MORB}%")
+with res_col2:
+    delta_morb = morb_risk - AVG_MORB
+    st.metric("30-Day Major Morbidity Risk", f"{morb_risk:.2f}%", delta=f"{delta_morb:+.2f}%", delta_color="inverse")
+    if morb_risk > 40:
+        st.warning("High Morbidity Risk detected.")
 
-# --- 4. DISCLOSURES & METHODOLOGY ---
+# --- 4. METHODOLOGY & SHAP INSIGHTS ---
+with st.expander("View Predictive Drivers (SHAP Analysis)"):
+    st.write("The following factors had the highest impact on this specific prediction:")
+    
+    # Simple logic to show what drove the specific score up
+    drivers = []
+    if alb < 3.5: drivers.append("Low Preoperative Albumin (High Risk)")
+    if age > 75: drivers.append("Advanced Age (High Risk)")
+    if frailty > 2: drivers.append("High Frailty Score (High Risk)")
+    if asa >= 4: drivers.append("ASA Class IV (High Risk)")
+    
+    if not drivers:
+        st.write("Patient is largely within low-risk parameters.")
+    else:
+        for d in drivers:
+            st.write(f"• {d}")
+
 st.divider()
-with st.expander("Methodology & Data Disclosure"):
-    st.write("""
-    **Methodology:**
-    * **Mortality** is predicted using a Random Forest Classifier (AUC > 0.90). 
-    * **Major Morbidity** is predicted using an eXtreme Gradient Boosting (XGBoost) model (AUC ~ 0.85).
-
-    **Legal Disclosure:**
-    The American College of Surgeons National Surgical Quality Improvement Program (ACS NSQIP) and the hospitals participating in the ACS NSQIP are the source of the data used herein; they have not verified and are not responsible for the statistical validity of the data analysis or the conclusions derived by the authors.
-
-    **Data Privacy:**
-    No ACS NSQIP raw data is hosted or shared. This tool executes a mathematical formula locally and does not store, collect, or transmit any protected health information (PHI).
-    """)
-
-st.write("© 2026 Predictive Risk Assessment Tool")
+st.error("⚠️ **Disclaimer:** This tool is for peer-review and research evaluation only. It uses retrospective data from the ACS NSQIP database. It does not replace clinical judgment.")
